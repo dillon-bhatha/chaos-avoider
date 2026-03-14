@@ -392,7 +392,7 @@ export class Game extends Phaser.Scene {
     if (k.w.isDown || (solo && k.up.isDown))    this.pA.y -= speed;
     if (k.s.isDown || (solo && k.down.isDown))  this.pA.y += speed;
 
-    if (this.gameMode === 'multi') {
+    if (this.gameMode === 'multi' || this.gameMode === 'versus') {
       if (k.left.isDown)  this.pB.x -= speed;
       if (k.right.isDown) this.pB.x += speed;
       if (k.up.isDown)    this.pB.y -= speed;
