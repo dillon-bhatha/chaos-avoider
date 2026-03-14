@@ -66,6 +66,7 @@ wss.on('connection', ws => {
 
     else if (msg.type === 'pos') relay(ws, { type: 'pos', x: msg.x, y: msg.y });
     else if (msg.type === 'die') relay(ws, { type: 'die' });
+    else if (msg.type === 'block') relay(ws, msg);
   });
 
   ws.on('close', () => {

@@ -57,6 +57,8 @@ export class Game extends Phaser.Scene {
           } else if (msg.type === 'disconnect') {
             this.alive = false;
             this.onlinePhase = 'disconnected';
+          } else if (msg.type === 'block') {
+            this.blocks.push({ x: msg.x, y: msg.y, w: msg.w, h: msg.h, dir: msg.dir, speed: msg.speed, hue: msg.hue });
           } else if (msg.type === 'opponent_ready') {
             this.opponentReady = true;
           } else if (msg.type === 'start') {
@@ -204,7 +206,7 @@ export class Game extends Phaser.Scene {
     const hi = this.arenaRight - type.w / 2;
     const x = xOverride !== undefined ? xOverride : lo + rng() * (hi - lo);
     const hue = rng() * 360;
-    this.blocks.push({
+    const block = {
       x,
       y: this.gravDir === 1 ? -type.h : H + type.h,
       w: type.w,
@@ -212,7 +214,11 @@ export class Game extends Phaser.Scene {
       dir: this.gravDir,
       speed: this.blockSpeed * type.spdMul,
       hue,
-    });
+    };
+    this.blocks.push(block);
+    if (this.gameMode === 'online' && this.isHost && this.ws?.readyState === 1) {
+      this.ws.send(JSON.stringify({ type: 'block', x: block.x, y: block.y, w: block.w, h: block.h, dir: block.dir, speed: block.speed, hue: block.hue }));
+    }
   }
 
   spawnVersusBlocks() {
@@ -257,7 +263,6 @@ export class Game extends Phaser.Scene {
 
     this.survivalTimer += dt;
     this.score = Math.floor(this.survivalTimer / 60);
-    this.gridOffset = (this.gridOffset + 0.5 * dt) % GRID_SIZE;
 
     const beat = this.audio.update();
     if (beat) {
@@ -289,19 +294,21 @@ export class Game extends Phaser.Scene {
       this.arenaRight = W - margin;
     }
 
-    this.spawnTimer += dt;
-    if (this.spawnTimer >= this.spawnInterval) {
-      this.spawnTimer = 0;
-      if (this.gameMode === 'versus') {
-        this.spawnVersusBlocks();
-      } else {
-        this.spawnBlock();
-        if (settings.mirrorPlayer && this.gameMode === 'solo') {
-          this.spawnBlock(W - this.blocks[this.blocks.length - 1].x);
+    if (this.gameMode !== 'online' || this.isHost) {
+      this.spawnTimer += dt;
+      if (this.spawnTimer >= this.spawnInterval) {
+        this.spawnTimer = 0;
+        if (this.gameMode === 'versus') {
+          this.spawnVersusBlocks();
+        } else {
+          this.spawnBlock();
+          if (settings.mirrorPlayer && this.gameMode === 'solo') {
+            this.spawnBlock(W - this.blocks[this.blocks.length - 1].x);
+          }
         }
+        this.spawnInterval = Math.max(MIN_INTERVAL, BASE_INTERVAL - Math.floor(this.survivalTimer / 60) * INTERVAL_STEP);
+        this.blockSpeed = BASE_SPEED + Math.floor(this.survivalTimer / 60) * SPEED_STEP;
       }
-      this.spawnInterval = Math.max(MIN_INTERVAL, BASE_INTERVAL - Math.floor(this.survivalTimer / 60) * INTERVAL_STEP);
-      this.blockSpeed = BASE_SPEED + Math.floor(this.survivalTimer / 60) * SPEED_STEP;
     }
 
     for (const b of this.blocks) {
@@ -483,6 +490,7 @@ export class Game extends Phaser.Scene {
 
   draw() {
     if (this._leaving) return;
+    this.gridOffset = ((this.gridOffset || 0) + 0.5) % GRID_SIZE;
     const g = this.gfx;
     g.clear();
     const ctx = this.sys.canvas.getContext('2d');
@@ -699,7 +707,7 @@ export class Game extends Phaser.Scene {
 
         ctx.fillStyle = '#444466';
         ctx.font = '13px monospace';
-        ctx.fillText('ESC / R — main menu', W / 2, H / 2 + 92);
+        ctx.fillText('ESC — main menu', W / 2, H / 2 + 92);
 
       } else if (this.onlinePhase === 'disconnected') {
         ctx.fillStyle = 'rgba(0,0,0,0.8)';
