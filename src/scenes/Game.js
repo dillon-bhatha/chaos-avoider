@@ -476,7 +476,7 @@ export class Game extends Phaser.Scene {
       this.highScore = this.score;
       localStorage.setItem(lsKey, String(this.highScore));
     }
-    this.time.delayedCall(800, () => { this.onlinePhase = 'postgame'; });
+    this.onlinePhase = 'postgame';
   }
 
   leaveScene(key) {
