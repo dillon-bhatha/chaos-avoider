@@ -10,23 +10,12 @@ import {
 } from '../constants.js';
 import { settings } from '../settings.js';
 import { AudioBeat } from '../audio.js';
-import { hsbToHex, hsbToRgb, isHueSafe, circleRect, randInt, clamp, seededRng } from '../utils.js';
-
-function hsbStr(h, s, b, a = 1) {
-  const { r, g, bl } = { r: 0, g: 0, bl: 0, ...hsbToRgb(h, s, b) };
-  return `rgba(${r},${hsbToRgb(h, s, b).g},${hsbToRgb(h, s, b).b},${a})`;
-}
+import { hsbToRgb, isHueSafe, circleRect, clamp, seededRng } from '../utils.js';
 
 function hsb(h, s, b) {
   const { r, g } = hsbToRgb(h, s, b);
   const bl = hsbToRgb(h, s, b).b;
   return Phaser.Display.Color.GetColor(r, g, bl);
-}
-
-function hsba(h, s, b, a) {
-  const { r, g } = hsbToRgb(h, s, b);
-  const bl = hsbToRgb(h, s, b).b;
-  return { color: Phaser.Display.Color.GetColor(r, g, bl), alpha: a };
 }
 
 export class Game extends Phaser.Scene {
@@ -36,11 +25,16 @@ export class Game extends Phaser.Scene {
     this.gameMode = data.mode || 'solo';
     this.originalSeed = data.seed || 0;
     this.isHost = data.isHost || false;
+    this.onlinePhase = null; // 'countdown' | 'playing' | 'postgame' | 'waiting_rematch' | 'disconnected'
+    this.countdownVal = 0;
+    this.myReady = false;
+    this.opponentReady = false;
   }
 
   create() {
     this.gfx = this.add.graphics();
     this.audio = new AudioBeat();
+    this._leaving = false;
     this.sys.game.events.on('postrender', this.draw, this);
     this.events.once('shutdown', () => {
       this.sys.game.events.off('postrender', this.draw, this);
@@ -56,8 +50,18 @@ export class Game extends Phaser.Scene {
           if (msg.type === 'pos') {
             this.pB.x = msg.x;
             this.pB.y = msg.y;
-          } else if (msg.type === 'die' || msg.type === 'disconnect') {
+          } else if (msg.type === 'die') {
             if (this.alive) this.die();
+          } else if (msg.type === 'disconnect') {
+            this.alive = false;
+            this.onlinePhase = 'disconnected';
+          } else if (msg.type === 'opponent_ready') {
+            this.opponentReady = true;
+          } else if (msg.type === 'start') {
+            this.originalSeed = msg.seed;
+            this.myReady = false;
+            this.opponentReady = false;
+            this.startCountdown();
           }
         };
       }
@@ -78,13 +82,23 @@ export class Game extends Phaser.Scene {
     });
 
     this.input.keyboard.on('keydown-SPACE', () => {
+      if (this.gameMode === 'online') {
+        if (this.onlinePhase === 'postgame') {
+          this.myReady = true;
+          this.onlinePhase = 'waiting_rematch';
+          if (this.ws?.readyState === 1) {
+            this.ws.send(JSON.stringify({ type: 'ready' }));
+          }
+        }
+        return;
+      }
       if (this.gameMode === 'solo' && settings.gravityFlip) {
         this.flipGravity();
       }
     });
 
     this.input.keyboard.on('keydown-R', () => {
-      if (this.gameMode === 'online') this.leaveScene('OnlineMenu');
+      if (this.gameMode === 'online') this.leaveScene('MainMenu');
       else this.resetGame();
     });
     this.input.keyboard.on('keydown-ESC', () => this.leaveScene('MainMenu'));
@@ -102,6 +116,31 @@ export class Game extends Phaser.Scene {
 
     this.ghostRun = [];
     this.resetGame();
+
+    if (this.gameMode === 'online') {
+      this.startCountdown();
+    }
+  }
+
+  startCountdown() {
+    this.onlinePhase = 'countdown';
+    this.alive = false;
+    this.blocks = [];
+    this.particles = [];
+    this.trailA = [];
+    this.trailB = [];
+    this.countdownVal = 3;
+
+    const tick = () => {
+      this.countdownVal--;
+      if (this.countdownVal < 0) {
+        this.resetGame();
+        this.onlinePhase = 'playing';
+      } else {
+        this.time.delayedCall(this.countdownVal === 0 ? 800 : 1000, tick);
+      }
+    };
+    this.time.delayedCall(1000, tick);
   }
 
   resetGame() {
@@ -184,30 +223,33 @@ export class Game extends Phaser.Scene {
     }
   }
 
-  update() {
+  update(time, delta) {
+    if (this.gameMode === 'online' && this.onlinePhase !== 'playing') return;
     if (!this.alive) return;
 
-    this.survivalTimer++;
+    const dt = delta / (1000 / 60);
+
+    this.survivalTimer += dt;
     this.score = Math.floor(this.survivalTimer / 60);
-    this.gridOffset = (this.gridOffset + 0.5) % GRID_SIZE;
+    this.gridOffset = (this.gridOffset + 0.5 * dt) % GRID_SIZE;
 
     const beat = this.audio.update();
     if (beat) {
       this.beatPulse = 1;
       this.shake += 1;
     }
-    this.beatPulse *= 0.88;
-    this.shake = Math.max(0, this.shake * SHAKE_DECAY);
+    this.beatPulse *= Math.pow(0.88, dt);
+    this.shake = Math.max(0, this.shake * Math.pow(SHAKE_DECAY, dt));
 
-    this.movePlayer();
+    this.movePlayer(dt);
 
     if (settings.colorMatch) {
-      this.hueA = (this.hueA + HUE_CYCLE_RATE) % 360;
-      this.hueB = (this.hueB + HUE_CYCLE_RATE) % 360;
+      this.hueA = (this.hueA + HUE_CYCLE_RATE * dt) % 360;
+      this.hueB = (this.hueB + HUE_CYCLE_RATE * dt) % 360;
     }
 
     if (settings.gravityFlip && this.gameMode === 'solo') {
-      this.gravFlipTimer--;
+      this.gravFlipTimer -= dt;
       if (this.gravFlipTimer <= 0) {
         this.flipGravity();
         this.gravFlipTimer = FLIP_INTERVAL;
@@ -221,7 +263,7 @@ export class Game extends Phaser.Scene {
       this.arenaRight = W - margin;
     }
 
-    this.spawnTimer++;
+    this.spawnTimer += dt;
     if (this.spawnTimer >= this.spawnInterval) {
       this.spawnTimer = 0;
       this.spawnBlock();
@@ -233,12 +275,12 @@ export class Game extends Phaser.Scene {
     }
 
     for (const b of this.blocks) {
-      b.y += b.speed * b.dir;
+      b.y += b.speed * b.dir * dt;
     }
 
     for (const b of this.blocks) {
-      const outA = b.dir === 1 ? b.y - b.h / 2 > H : b.y + b.h / 2 < 0;
-      if (outA) b.dead = true;
+      const out = b.dir === 1 ? b.y - b.h / 2 > H : b.y + b.h / 2 < 0;
+      if (out) b.dead = true;
     }
 
     for (const b of this.blocks) {
@@ -254,8 +296,7 @@ export class Game extends Phaser.Scene {
           this.spawnParticle(this.pA.x, this.pA.y, b.hue);
           b.dead = true;
         } else {
-          this.die();
-          return;
+          this.die(); return;
         }
       }
       if (hitB && !b.dead) {
@@ -264,8 +305,7 @@ export class Game extends Phaser.Scene {
           this.spawnParticle(this.pB.x, this.pB.y, b.hue);
           b.dead = true;
         } else {
-          this.die();
-          return;
+          this.die(); return;
         }
       }
     }
@@ -287,9 +327,11 @@ export class Game extends Phaser.Scene {
     });
 
     for (const p of this.particles) {
-      p.x += p.vx; p.y += p.vy;
-      p.vx *= 0.95; p.vy *= 0.95;
-      p.life--;
+      p.x += p.vx * dt;
+      p.y += p.vy * dt;
+      p.vx *= Math.pow(0.95, dt);
+      p.vy *= Math.pow(0.95, dt);
+      p.life -= dt;
     }
     this.particles = this.particles.filter(p => p.life > 0);
 
@@ -298,14 +340,15 @@ export class Game extends Phaser.Scene {
     }
   }
 
-  movePlayer() {
+  movePlayer(dt = 1) {
     const k = this.keys;
+    const speed = PLAYER_SPEED * dt;
 
     if (this.gameMode === 'online') {
-      if (k.a.isDown || k.left.isDown)  this.pA.x -= PLAYER_SPEED;
-      if (k.d.isDown || k.right.isDown) this.pA.x += PLAYER_SPEED;
-      if (k.w.isDown || k.up.isDown)    this.pA.y -= PLAYER_SPEED;
-      if (k.s.isDown || k.down.isDown)  this.pA.y += PLAYER_SPEED;
+      if (k.a.isDown || k.left.isDown)  this.pA.x -= speed;
+      if (k.d.isDown || k.right.isDown) this.pA.x += speed;
+      if (k.w.isDown || k.up.isDown)    this.pA.y -= speed;
+      if (k.s.isDown || k.down.isDown)  this.pA.y += speed;
       const lo = this.arenaLeft + PLAYER_R;
       const hi = this.arenaRight - PLAYER_R;
       this.pA.x = clamp(this.pA.x, lo, hi);
@@ -314,17 +357,16 @@ export class Game extends Phaser.Scene {
     }
 
     const solo = this.gameMode === 'solo';
-
-    if (k.a.isDown || (solo && k.left.isDown))  this.pA.x -= PLAYER_SPEED;
-    if (k.d.isDown || (solo && k.right.isDown)) this.pA.x += PLAYER_SPEED;
-    if (k.w.isDown || (solo && k.up.isDown))    this.pA.y -= PLAYER_SPEED;
-    if (k.s.isDown || (solo && k.down.isDown))  this.pA.y += PLAYER_SPEED;
+    if (k.a.isDown || (solo && k.left.isDown))  this.pA.x -= speed;
+    if (k.d.isDown || (solo && k.right.isDown)) this.pA.x += speed;
+    if (k.w.isDown || (solo && k.up.isDown))    this.pA.y -= speed;
+    if (k.s.isDown || (solo && k.down.isDown))  this.pA.y += speed;
 
     if (this.gameMode === 'multi') {
-      if (k.left.isDown)  this.pB.x -= PLAYER_SPEED;
-      if (k.right.isDown) this.pB.x += PLAYER_SPEED;
-      if (k.up.isDown)    this.pB.y -= PLAYER_SPEED;
-      if (k.down.isDown)  this.pB.y += PLAYER_SPEED;
+      if (k.left.isDown)  this.pB.x -= speed;
+      if (k.right.isDown) this.pB.x += speed;
+      if (k.up.isDown)    this.pB.y -= speed;
+      if (k.down.isDown)  this.pB.y += speed;
     }
 
     if (this.gameMode === 'solo' && settings.mirrorPlayer) {
@@ -345,12 +387,14 @@ export class Game extends Phaser.Scene {
   die() {
     if (!this.alive) return;
     this.alive = false;
+
     if (this.gameMode === 'online' && this.ws?.readyState === 1) {
       this.ws.send(JSON.stringify({ type: 'die' }));
     }
+
     this.shake += 20;
     this.spawnParticle(this.pA.x, this.pA.y, this.hueA);
-    if (settings.mirrorPlayer || this.gameMode === 'multi') {
+    if (settings.mirrorPlayer || this.gameMode === 'multi' || this.gameMode === 'online') {
       this.spawnParticle(this.pB.x, this.pB.y, this.hueB);
     }
 
@@ -358,6 +402,13 @@ export class Game extends Phaser.Scene {
     if (this.score > this.highScore) {
       this.highScore = this.score;
       localStorage.setItem(lsKey, String(this.highScore));
+    }
+
+    if (this.gameMode === 'online') {
+      this.time.delayedCall(800, () => {
+        this.onlinePhase = 'postgame';
+      });
+      return;
     }
 
     this.time.delayedCall(800, () => {
@@ -372,6 +423,10 @@ export class Game extends Phaser.Scene {
 
   leaveScene(key) {
     this._leaving = true;
+    if (this.gameMode === 'online' && this.ws) {
+      this.ws.close();
+      this.sys.game.registry.set('ws', null);
+    }
     this.scene.start(key);
   }
 
@@ -392,7 +447,7 @@ export class Game extends Phaser.Scene {
     ctx.fillStyle = '#0a0a1a';
     ctx.fillRect(-10, -10, W + 20, H + 20);
 
-    const pulse = this.beatPulse * 0.12;
+    const pulse = (this.beatPulse || 0) * 0.12;
     ctx.strokeStyle = `rgba(0,255,255,${0.05 + pulse})`;
     ctx.lineWidth = 1;
     for (let x = -GRID_SIZE + (this.gridOffset % GRID_SIZE); x < W + GRID_SIZE; x += GRID_SIZE) {
@@ -403,7 +458,7 @@ export class Game extends Phaser.Scene {
     }
 
     for (const s of this.stars) {
-      const a = 0.3 + s.bright * 0.5 + this.beatPulse * 0.2;
+      const a = 0.3 + s.bright * 0.5 + (this.beatPulse || 0) * 0.2;
       ctx.fillStyle = `rgba(255,255,255,${a})`;
       ctx.beginPath();
       ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
@@ -420,7 +475,7 @@ export class Game extends Phaser.Scene {
       ctx.beginPath(); ctx.moveTo(this.arenaRight, 0); ctx.lineTo(this.arenaRight, H); ctx.stroke();
     }
 
-    if (settings.ghostRun && this.prevGhostRun.length > 0 && this.ghostFrame < this.prevGhostRun.length) {
+    if (settings.ghostRun && this.prevGhostRun?.length > 0 && this.ghostFrame < this.prevGhostRun.length) {
       const gf = this.prevGhostRun[this.ghostFrame];
       this.ghostFrame++;
       ctx.globalAlpha = GHOST_ALPHA;
@@ -498,7 +553,7 @@ export class Game extends Phaser.Scene {
 
     if (settings.gravityFlip && this.gameMode === 'solo') {
       const flipPct = Math.round((this.gravFlipTimer / FLIP_INTERVAL) * 100);
-      ctx.fillStyle = `rgba(255,180,0,${0.5 + this.beatPulse * 0.5})`;
+      ctx.fillStyle = `rgba(255,180,0,${0.5 + (this.beatPulse || 0) * 0.5})`;
       ctx.font = '12px monospace';
       ctx.textAlign = 'right';
       ctx.fillText(`FLIP ${flipPct}%`, W - 16, 30);
@@ -523,6 +578,80 @@ export class Game extends Phaser.Scene {
       ctx.font = '11px monospace';
       ctx.textAlign = 'center';
       ctx.fillText('P1: WASD   P2: ↑↓←→', W / 2, H - 8);
+    }
+
+    // Online overlays
+    if (this.gameMode === 'online') {
+      if (this.onlinePhase === 'countdown') {
+        ctx.fillStyle = 'rgba(0,0,0,0.55)';
+        ctx.fillRect(0, 0, W, H);
+        const label = this.countdownVal > 0 ? String(this.countdownVal) : 'GO!';
+        const col = this.countdownVal > 0 ? '#ffffff' : '#00ff88';
+        ctx.shadowBlur = 40;
+        ctx.shadowColor = col;
+        ctx.fillStyle = col;
+        ctx.font = 'bold 96px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText(label, W / 2, H / 2 + 36);
+        ctx.shadowBlur = 0;
+
+      } else if (this.onlinePhase === 'postgame' || this.onlinePhase === 'waiting_rematch') {
+        ctx.fillStyle = 'rgba(0,0,0,0.72)';
+        ctx.fillRect(0, 0, W, H);
+
+        ctx.shadowBlur = 20;
+        ctx.shadowColor = '#ff4466';
+        ctx.fillStyle = '#ff4466';
+        ctx.font = 'bold 44px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText('GAME OVER', W / 2, H / 2 - 70);
+        ctx.shadowBlur = 0;
+
+        ctx.fillStyle = '#ffffff';
+        ctx.font = '24px monospace';
+        ctx.fillText(`Score: ${this.score}s`, W / 2, H / 2 - 20);
+
+        // Ready indicators
+        const p1label = this.isHost ? 'You' : 'Player 1';
+        const p2label = this.isHost ? 'Player 2' : 'You';
+        const p1ready = this.isHost ? this.myReady : this.opponentReady;
+        const p2ready = this.isHost ? this.opponentReady : this.myReady;
+
+        ctx.font = '15px monospace';
+        ctx.fillStyle = p1ready ? '#00ff88' : '#555577';
+        ctx.textAlign = 'right';
+        ctx.fillText((p1ready ? '✓ ' : '○ ') + p1label, W / 2 - 10, H / 2 + 30);
+
+        ctx.fillStyle = p2ready ? '#00ff88' : '#555577';
+        ctx.textAlign = 'left';
+        ctx.fillText((p2ready ? '✓ ' : '○ ') + p2label, W / 2 + 10, H / 2 + 30);
+
+        ctx.textAlign = 'center';
+        if (this.onlinePhase === 'postgame') {
+          ctx.fillStyle = '#00ffcc';
+          ctx.font = '18px monospace';
+          ctx.fillText('SPACE — rematch', W / 2, H / 2 + 65);
+        } else {
+          ctx.fillStyle = '#888899';
+          ctx.font = '16px monospace';
+          ctx.fillText('Waiting for opponent...', W / 2, H / 2 + 65);
+        }
+
+        ctx.fillStyle = '#444466';
+        ctx.font = '13px monospace';
+        ctx.fillText('ESC / R — main menu', W / 2, H / 2 + 92);
+
+      } else if (this.onlinePhase === 'disconnected') {
+        ctx.fillStyle = 'rgba(0,0,0,0.8)';
+        ctx.fillRect(0, 0, W, H);
+        ctx.fillStyle = '#ff4466';
+        ctx.font = 'bold 28px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText('Opponent disconnected', W / 2, H / 2 - 20);
+        ctx.fillStyle = '#444466';
+        ctx.font = '14px monospace';
+        ctx.fillText('ESC / R — main menu', W / 2, H / 2 + 20);
+      }
     }
 
     ctx.restore(); // removes resolution scale

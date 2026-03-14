@@ -16,6 +16,12 @@ function relay(ws, data) {
   if (other?.readyState === 1) other.send(JSON.stringify(data));
 }
 
+function sendToRoom(room, data) {
+  const msg = JSON.stringify(data);
+  if (room.host?.readyState === 1) room.host.send(msg);
+  if (room.guest?.readyState === 1) room.guest.send(msg);
+}
+
 wss.on('connection', ws => {
   ws.roomCode = null;
   ws.isHost = false;
@@ -27,7 +33,7 @@ wss.on('connection', ws => {
     if (msg.type === 'create') {
       const code = genCode();
       const seed = (Math.random() * 0xffffffff) >>> 0;
-      rooms.set(code, { host: ws, guest: null, seed });
+      rooms.set(code, { host: ws, guest: null, seed, readyCount: 0 });
       ws.roomCode = code;
       ws.isHost = true;
       ws.send(JSON.stringify({ type: 'created', code, seed }));
@@ -44,6 +50,18 @@ wss.on('connection', ws => {
       const start = JSON.stringify({ type: 'start', seed: room.seed });
       room.host.send(start);
       room.guest.send(start);
+    }
+
+    else if (msg.type === 'ready') {
+      const room = rooms.get(ws.roomCode);
+      if (!room) return;
+      relay(ws, { type: 'opponent_ready' });
+      room.readyCount = (room.readyCount || 0) + 1;
+      if (room.readyCount >= 2) {
+        room.readyCount = 0;
+        const seed = (Math.random() * 0xffffffff) >>> 0;
+        sendToRoom(room, { type: 'start', seed });
+      }
     }
 
     else if (msg.type === 'pos') relay(ws, { type: 'pos', x: msg.x, y: msg.y });
