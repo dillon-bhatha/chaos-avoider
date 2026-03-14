@@ -14,15 +14,17 @@ export class MultiMenu extends Phaser.Scene {
 
     this.input.keyboard.on('keydown', (e) => {
       if (e.code === 'ArrowUp' || e.code === 'KeyW') {
-        this.menuIndex = (this.menuIndex - 1 + 3) % 3;
+        this.menuIndex = (this.menuIndex - 1 + 4) % 4;
       } else if (e.code === 'ArrowDown' || e.code === 'KeyS') {
-        this.menuIndex = (this.menuIndex + 1) % 3;
+        this.menuIndex = (this.menuIndex + 1) % 4;
       } else if (e.code === 'Space' || e.code === 'Enter') {
         if (this.menuIndex === 0) {
           this.scene.start('Game', { mode: 'multi' });
         } else if (this.menuIndex === 1) {
-          this.shareWhatsApp();
+          this.scene.start('Game', { mode: 'versus' });
         } else if (this.menuIndex === 2) {
+          this.shareWhatsApp();
+        } else if (this.menuIndex === 3) {
           this.copyLink();
         }
       } else if (e.code === 'Escape') {
@@ -80,36 +82,40 @@ export class MultiMenu extends Phaser.Scene {
   buildUI() {
     this.built = true;
 
-    this.add.text(W / 2, 50, 'CO-OP', {
-      fontFamily: 'monospace', fontSize: '28px', color: '#ff44ff',
+    this.add.text(W / 2, 44, 'LOCAL MULTIPLAYER', {
+      fontFamily: 'monospace', fontSize: '26px', color: '#ff44ff',
       shadow: { color: '#ff44ff', blur: 16, fill: true },
     }).setOrigin(0.5);
 
-    this.add.text(W / 2, 90, 'Two players · same keyboard', {
-      fontFamily: 'monospace', fontSize: '14px', color: '#aaaaaa',
-    }).setOrigin(0.5);
-
-    this.add.text(W / 2, 115, 'Player 1: WASD   Player 2: Arrow keys', {
+    this.add.text(W / 2, 80, 'Two players · same keyboard · WASD vs Arrows', {
       fontFamily: 'monospace', fontSize: '12px', color: '#666688',
     }).setOrigin(0.5);
 
-    this.playText = this.add.text(W / 2, 200, '▶  PLAY', {
+    this.coopText = this.add.text(W / 2, 158, '▶  CO-OP', {
       fontFamily: 'monospace', fontSize: '22px', color: '#ffffff',
     }).setOrigin(0.5);
-
-    this.waText = this.add.text(W / 2, 280, 'WhatsApp Invite', {
-      fontFamily: 'monospace', fontSize: '18px', color: '#ffffff',
-    }).setOrigin(0.5);
-
-    this.add.text(W / 2, 302, 'Share a link via WhatsApp', {
+    this.add.text(W / 2, 180, 'Survive together', {
       fontFamily: 'monospace', fontSize: '12px', color: '#555577',
     }).setOrigin(0.5);
 
-    this.copyText = this.add.text(W / 2, 360, 'Copy Link', {
-      fontFamily: 'monospace', fontSize: '18px', color: '#ffffff',
+    this.vsText = this.add.text(W / 2, 238, '▶  VERSUS', {
+      fontFamily: 'monospace', fontSize: '22px', color: '#ffffff',
+    }).setOrigin(0.5);
+    this.add.text(W / 2, 260, 'First to die loses', {
+      fontFamily: 'monospace', fontSize: '12px', color: '#555577',
     }).setOrigin(0.5);
 
-    this.add.text(W / 2, 382, 'Copy the game URL to clipboard', {
+    this.waText = this.add.text(W / 2, 320, 'WhatsApp Invite', {
+      fontFamily: 'monospace', fontSize: '18px', color: '#ffffff',
+    }).setOrigin(0.5);
+    this.add.text(W / 2, 342, 'Share a link via WhatsApp', {
+      fontFamily: 'monospace', fontSize: '12px', color: '#555577',
+    }).setOrigin(0.5);
+
+    this.copyText = this.add.text(W / 2, 395, 'Copy Link', {
+      fontFamily: 'monospace', fontSize: '18px', color: '#ffffff',
+    }).setOrigin(0.5);
+    this.add.text(W / 2, 417, 'Copy the game URL to clipboard', {
       fontFamily: 'monospace', fontSize: '12px', color: '#555577',
     }).setOrigin(0.5);
 
@@ -122,15 +128,16 @@ export class MultiMenu extends Phaser.Scene {
 
   updateSelection() {
     this.selBox.clear();
-    const ys = [200, 285, 365];
+    const ys = [158, 238, 324, 398];
     const y = ys[this.menuIndex];
     this.selBox.lineStyle(2, 0xff44ff, 0.8);
     this.selBox.strokeRect(W / 2 - 190, y - 26, 380, 52);
     this.selBox.fillStyle(0xff44ff, 0.04);
     this.selBox.fillRect(W / 2 - 190, y - 26, 380, 52);
 
-    this.playText.setStyle({ color: this.menuIndex === 0 ? '#ff44ff' : '#ffffff' });
-    this.waText.setStyle({ color: this.menuIndex === 1 ? '#ff44ff' : '#ffffff' });
-    this.copyText.setStyle({ color: this.menuIndex === 2 ? '#ff44ff' : '#ffffff' });
+    this.coopText.setStyle({ color: this.menuIndex === 0 ? '#ff44ff' : '#ffffff' });
+    this.vsText.setStyle({ color: this.menuIndex === 1 ? '#ff44ff' : '#ffffff' });
+    this.waText.setStyle({ color: this.menuIndex === 2 ? '#ff44ff' : '#ffffff' });
+    this.copyText.setStyle({ color: this.menuIndex === 3 ? '#ff44ff' : '#ffffff' });
   }
 }

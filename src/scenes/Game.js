@@ -29,6 +29,8 @@ export class Game extends Phaser.Scene {
     this.countdownVal = 0;
     this.myReady = false;
     this.opponentReady = false;
+    this.onlineResult = null; // 'win' | 'lose'
+    this.winner = null; // 'A' | 'B' for versus mode
   }
 
   create() {
@@ -51,7 +53,7 @@ export class Game extends Phaser.Scene {
             this.pB.x = msg.x;
             this.pB.y = msg.y;
           } else if (msg.type === 'die') {
-            if (this.alive) this.die();
+            if (this.alive) this.endOnline('win');
           } else if (msg.type === 'disconnect') {
             this.alive = false;
             this.onlinePhase = 'disconnected';
@@ -145,10 +147,16 @@ export class Game extends Phaser.Scene {
 
   resetGame() {
     this.rng = this.originalSeed ? seededRng(this.originalSeed) : Math.random;
-    this.pA = { x: W * 0.3, y: H / 2 };
-    this.pB = this.gameMode === 'multi'
-      ? { x: W * 0.7, y: H / 2 }
-      : { x: W - W * 0.3, y: H / 2 };
+    if (this.gameMode === 'versus') {
+      this.pA = { x: W * 0.25, y: H / 2 };
+      this.pB = { x: W * 0.75, y: H / 2 };
+    } else {
+      this.pA = { x: W * 0.3, y: H / 2 };
+      this.pB = this.gameMode === 'multi'
+        ? { x: W * 0.7, y: H / 2 }
+        : { x: W - W * 0.3, y: H / 2 };
+    }
+    this.winner = null;
 
     this.trailA = [];
     this.trailB = [];
@@ -205,6 +213,24 @@ export class Game extends Phaser.Scene {
       speed: this.blockSpeed * type.spdMul,
       hue,
     });
+  }
+
+  spawnVersusBlocks() {
+    const rng = this.rng;
+    for (const owner of ['A', 'B']) {
+      const type = BLOCK_TYPES[Math.floor(rng() * BLOCK_TYPES.length)];
+      const half = owner === 'A' ? 0 : W / 2;
+      const x = half + type.w / 2 + rng() * (W / 2 - type.w);
+      const hue = rng() * 360;
+      this.blocks.push({
+        x, owner,
+        y: this.gravDir === 1 ? -type.h : H + type.h,
+        w: type.w, h: type.h,
+        dir: this.gravDir,
+        speed: this.blockSpeed * type.spdMul,
+        hue,
+      });
+    }
   }
 
   spawnParticle(x, y, hue) {
@@ -266,9 +292,13 @@ export class Game extends Phaser.Scene {
     this.spawnTimer += dt;
     if (this.spawnTimer >= this.spawnInterval) {
       this.spawnTimer = 0;
-      this.spawnBlock();
-      if (settings.mirrorPlayer && this.gameMode === 'solo') {
-        this.spawnBlock(W - this.blocks[this.blocks.length - 1].x);
+      if (this.gameMode === 'versus') {
+        this.spawnVersusBlocks();
+      } else {
+        this.spawnBlock();
+        if (settings.mirrorPlayer && this.gameMode === 'solo') {
+          this.spawnBlock(W - this.blocks[this.blocks.length - 1].x);
+        }
       }
       this.spawnInterval = Math.max(MIN_INTERVAL, BASE_INTERVAL - Math.floor(this.survivalTimer / 60) * INTERVAL_STEP);
       this.blockSpeed = BASE_SPEED + Math.floor(this.survivalTimer / 60) * SPEED_STEP;
@@ -285,9 +315,9 @@ export class Game extends Phaser.Scene {
 
     for (const b of this.blocks) {
       if (b.dead) continue;
-      const hitA = circleRect(this.pA.x, this.pA.y, PLAYER_R, b.x, b.y, b.w, b.h);
-      const hitB = (this.gameMode === 'multi' || (settings.mirrorPlayer && this.gameMode === 'solo'))
-        ? circleRect(this.pB.x, this.pB.y, PLAYER_R, b.x, b.y, b.w, b.h)
+      const hitA = (b.owner !== 'B') && circleRect(this.pA.x, this.pA.y, PLAYER_R, b.x, b.y, b.w, b.h);
+      const hitB = (this.gameMode === 'multi' || this.gameMode === 'versus' || (settings.mirrorPlayer && this.gameMode === 'solo'))
+        ? (b.owner !== 'A') && circleRect(this.pB.x, this.pB.y, PLAYER_R, b.x, b.y, b.w, b.h)
         : false;
 
       if (hitA) {
@@ -296,7 +326,7 @@ export class Game extends Phaser.Scene {
           this.spawnParticle(this.pA.x, this.pA.y, b.hue);
           b.dead = true;
         } else {
-          this.die(); return;
+          this.die('A'); return;
         }
       }
       if (hitB && !b.dead) {
@@ -305,7 +335,7 @@ export class Game extends Phaser.Scene {
           this.spawnParticle(this.pB.x, this.pB.y, b.hue);
           b.dead = true;
         } else {
-          this.die(); return;
+          this.die('B'); return;
         }
       }
     }
@@ -376,39 +406,41 @@ export class Game extends Phaser.Scene {
 
     const lo = this.arenaLeft + PLAYER_R;
     const hi = this.arenaRight - PLAYER_R;
-    this.pA.x = clamp(this.pA.x, lo, hi);
-    this.pA.y = clamp(this.pA.y, PLAYER_R, H - PLAYER_R);
-    if (this.gameMode === 'multi') {
-      this.pB.x = clamp(this.pB.x, lo, hi);
+    if (this.gameMode === 'versus') {
+      this.pA.x = clamp(this.pA.x, lo, W / 2 - PLAYER_R);
+      this.pA.y = clamp(this.pA.y, PLAYER_R, H - PLAYER_R);
+      this.pB.x = clamp(this.pB.x, W / 2 + PLAYER_R, hi);
       this.pB.y = clamp(this.pB.y, PLAYER_R, H - PLAYER_R);
+    } else {
+      this.pA.x = clamp(this.pA.x, lo, hi);
+      this.pA.y = clamp(this.pA.y, PLAYER_R, H - PLAYER_R);
+      if (this.gameMode === 'multi') {
+        this.pB.x = clamp(this.pB.x, lo, hi);
+        this.pB.y = clamp(this.pB.y, PLAYER_R, H - PLAYER_R);
+      }
     }
   }
 
-  die() {
+  die(who = 'A') {
     if (!this.alive) return;
     this.alive = false;
+    this.winner = who === 'A' ? 'B' : 'A';
 
-    if (this.gameMode === 'online' && this.ws?.readyState === 1) {
-      this.ws.send(JSON.stringify({ type: 'die' }));
+    if (this.gameMode === 'online') {
+      this.endOnline('lose');
+      return;
     }
 
     this.shake += 20;
     this.spawnParticle(this.pA.x, this.pA.y, this.hueA);
-    if (settings.mirrorPlayer || this.gameMode === 'multi' || this.gameMode === 'online') {
+    if (settings.mirrorPlayer || this.gameMode === 'multi' || this.gameMode === 'versus' || this.gameMode === 'online') {
       this.spawnParticle(this.pB.x, this.pB.y, this.hueB);
     }
 
-    const lsKey = this.gameMode === 'multi' ? LS_KEY_MULTI : LS_KEY_SOLO;
+    const lsKey = this.gameMode === 'multi' || this.gameMode === 'versus' ? LS_KEY_MULTI : LS_KEY_SOLO;
     if (this.score > this.highScore) {
       this.highScore = this.score;
       localStorage.setItem(lsKey, String(this.highScore));
-    }
-
-    if (this.gameMode === 'online') {
-      this.time.delayedCall(800, () => {
-        this.onlinePhase = 'postgame';
-      });
-      return;
     }
 
     this.time.delayedCall(800, () => {
@@ -417,8 +449,27 @@ export class Game extends Phaser.Scene {
         highScore: this.highScore,
         mode: this.gameMode,
         ghostRun: this.ghostRun,
+        winner: this.winner,
       });
     });
+  }
+
+  endOnline(result) {
+    if (!this.alive) return;
+    this.alive = false;
+    this.onlineResult = result;
+    if (result === 'lose' && this.ws?.readyState === 1) {
+      this.ws.send(JSON.stringify({ type: 'die' }));
+    }
+    this.shake += result === 'lose' ? 20 : 10;
+    this.spawnParticle(this.pA.x, this.pA.y, this.hueA);
+    if (result === 'win') this.spawnParticle(this.pB.x, this.pB.y, this.hueB);
+    const lsKey = LS_KEY_SOLO;
+    if (this.score > this.highScore) {
+      this.highScore = this.score;
+      localStorage.setItem(lsKey, String(this.highScore));
+    }
+    this.time.delayedCall(800, () => { this.onlinePhase = 'postgame'; });
   }
 
   leaveScene(key) {
@@ -465,6 +516,14 @@ export class Game extends Phaser.Scene {
       ctx.fill();
     }
 
+    if (this.gameMode === 'versus') {
+      ctx.strokeStyle = 'rgba(255,255,255,0.12)';
+      ctx.lineWidth = 2;
+      ctx.setLineDash([12, 10]);
+      ctx.beginPath(); ctx.moveTo(W / 2, 0); ctx.lineTo(W / 2, H); ctx.stroke();
+      ctx.setLineDash([]);
+    }
+
     if (settings.shrinkArena && this.arenaLeft > 0) {
       ctx.fillStyle = 'rgba(255,30,30,0.15)';
       ctx.fillRect(0, 0, this.arenaLeft, H);
@@ -507,7 +566,7 @@ export class Game extends Phaser.Scene {
       ctx.fill();
     }
 
-    if (settings.mirrorPlayer || this.gameMode === 'multi' || this.gameMode === 'online') {
+    if (settings.mirrorPlayer || this.gameMode === 'multi' || this.gameMode === 'online' || this.gameMode === 'versus') {
       for (let i = this.trailB.length - 1; i >= 0; i--) {
         const a = (1 - i / TRAIL_LEN) * 0.4;
         const { r, g: pg, b: pb } = hsbToRgb(this.hueB, 80, 100);
@@ -535,7 +594,7 @@ export class Game extends Phaser.Scene {
 
     if (this.alive) {
       this.drawPlayerCtx(ctx, this.pA.x, this.pA.y, this.hueA);
-      if (settings.mirrorPlayer || this.gameMode === 'multi' || this.gameMode === 'online') {
+      if (settings.mirrorPlayer || this.gameMode === 'multi' || this.gameMode === 'online' || this.gameMode === 'versus') {
         this.drawPlayerCtx(ctx, this.pB.x, this.pB.y, this.hueB);
       }
     }
@@ -599,12 +658,13 @@ export class Game extends Phaser.Scene {
         ctx.fillStyle = 'rgba(0,0,0,0.72)';
         ctx.fillRect(0, 0, W, H);
 
+        const isWin = this.onlineResult === 'win';
         ctx.shadowBlur = 20;
-        ctx.shadowColor = '#ff4466';
-        ctx.fillStyle = '#ff4466';
+        ctx.shadowColor = isWin ? '#00ff88' : '#ff4466';
+        ctx.fillStyle = isWin ? '#00ff88' : '#ff4466';
         ctx.font = 'bold 44px monospace';
         ctx.textAlign = 'center';
-        ctx.fillText('GAME OVER', W / 2, H / 2 - 70);
+        ctx.fillText(isWin ? 'YOU WIN!' : 'YOU LOSE', W / 2, H / 2 - 70);
         ctx.shadowBlur = 0;
 
         ctx.fillStyle = '#ffffff';

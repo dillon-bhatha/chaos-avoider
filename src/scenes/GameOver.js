@@ -9,6 +9,7 @@ export class GameOver extends Phaser.Scene {
     this.highScore = data.highScore || 0;
     this.mode = data.mode || 'solo';
     this.savedGhostRun = data.ghostRun || [];
+    this.winner = data.winner || null; // 'A' | 'B' for versus
   }
 
   create() {
@@ -26,12 +27,23 @@ export class GameOver extends Phaser.Scene {
       this.scene.start('MainMenu');
     });
 
-    this.add.text(W / 2, 130, 'GAME OVER', {
-      fontFamily: 'monospace',
-      fontSize: '48px',
-      color: '#ff4466',
-      shadow: { color: '#ff0044', blur: 24, fill: true },
-    }).setOrigin(0.5);
+    if (this.winner) {
+      const label = this.winner === 'A' ? 'PLAYER 1 WINS!' : 'PLAYER 2 WINS!';
+      this.add.text(W / 2, 100, label, {
+        fontFamily: 'monospace', fontSize: '36px', color: '#00ff88',
+        shadow: { color: '#00cc66', blur: 20, fill: true },
+      }).setOrigin(0.5);
+      this.add.text(W / 2, 148, 'GAME OVER', {
+        fontFamily: 'monospace', fontSize: '28px', color: '#ff4466',
+      }).setOrigin(0.5);
+    } else {
+      this.add.text(W / 2, 130, 'GAME OVER', {
+        fontFamily: 'monospace',
+        fontSize: '48px',
+        color: '#ff4466',
+        shadow: { color: '#ff0044', blur: 24, fill: true },
+      }).setOrigin(0.5);
+    }
 
     this.add.text(W / 2, 200, `Score: ${this.finalScore}s`, {
       fontFamily: 'monospace',
