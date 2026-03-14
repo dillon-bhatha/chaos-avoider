@@ -430,7 +430,6 @@ export class Game extends Phaser.Scene {
 
   die(who = 'A') {
     if (!this.alive) return;
-    this.alive = false;
     this.winner = who === 'A' ? 'B' : 'A';
 
     if (this.gameMode === 'online') {
@@ -438,6 +437,7 @@ export class Game extends Phaser.Scene {
       return;
     }
 
+    this.alive = false;
     this.shake += 20;
     this.spawnParticle(this.pA.x, this.pA.y, this.hueA);
     if (settings.mirrorPlayer || this.gameMode === 'multi' || this.gameMode === 'versus' || this.gameMode === 'online') {
