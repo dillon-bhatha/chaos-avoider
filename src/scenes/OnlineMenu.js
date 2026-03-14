@@ -3,7 +3,7 @@ import { W, H, GRID_SIZE } from '../constants.js';
 
 const WS_URL = window.location.hostname === 'localhost'
   ? `ws://localhost:3001`
-  : `wss://JOUW-SERVER.onrender.com`;
+  : `wss://chaos-avoider.onrender.com`;
 
 export class OnlineMenu extends Phaser.Scene {
   constructor() { super('OnlineMenu'); }
