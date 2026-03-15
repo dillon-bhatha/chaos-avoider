@@ -486,6 +486,14 @@ export class Game extends Phaser.Scene {
   draw() {
     if (this._leaving) return;
     this.gridOffset = ((this.gridOffset || 0) + 0.5) % GRID_SIZE;
+
+    // Keepalive: prevent Render.com from closing idle WS connections
+    if (this.gameMode === 'online' && this.ws?.readyState === 1) {
+      this._keepTick = (this._keepTick || 0) + 1;
+      if (this._keepTick % (60 * 4) === 0) {
+        this.ws.send(JSON.stringify({ type: 'ping' }));
+      }
+    }
     const g = this.gfx;
     g.clear();
     const ctx = this.sys.canvas.getContext('2d');
